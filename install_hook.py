@@ -125,7 +125,7 @@ def build_hooks_config(python_exe: str, hook_dir: Path) -> dict:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": f"{python_exe_normalized} {script_path_str}",
+                        "command": f'"{python_exe_normalized}" "{script_path_str}"',
                         "timeout": timeout,
                     }
                 ]

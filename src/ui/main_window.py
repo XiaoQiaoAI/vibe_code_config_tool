@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
         self.mode_stack = QStackedWidget()
         self._mode_pages: list[ModePage] = []
         for i in range(3):
-            page = ModePage(self._state.config.modes[i])
+            page = ModePage(self._state.config.modes[i], device_state=self._state)
             page.config_changed.connect(self._on_config_changed)
             self._mode_pages.append(page)
             self.mode_stack.addWidget(page)
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(mode_widget, "模式配置")
 
         # --- 设备信息标签页 ---
-        self.device_page = DevicePage()
+        self.device_page = DevicePage(device_state=self._state)
         self.tabs.addTab(self.device_page, "设备信息")
 
         main_layout.addWidget(self.tabs)
@@ -137,13 +137,8 @@ class MainWindow(QMainWindow):
         if connected:
             self.device_page.log("已连接到桥接器", "info")
             self._refresh_device_info()
-            # 注入设备服务到模式页
-            for page in self._mode_pages:
-                page._device_service = self._state.service
         else:
             self.device_page.log("连接已断开", "error")
-            for page in self._mode_pages:
-                page._device_service = None
 
     def _refresh_device_info(self):
         self._state.query_status()

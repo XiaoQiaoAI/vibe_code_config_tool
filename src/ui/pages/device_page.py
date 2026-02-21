@@ -18,8 +18,9 @@ from ...comm.protocol import DeviceCmd, BLE_APPEARANCE
 class DevicePage(QWidget):
     """设备信息和调试日志页"""
 
-    def __init__(self, parent=None):
+    def __init__(self, device_state=None, parent=None):
         super().__init__(parent)
+        self._device_state = device_state  # 保存 DeviceState 引用
         self._setup_ui()
 
     def _setup_ui(self):
@@ -148,8 +149,7 @@ class DevicePage(QWidget):
 
     def _apply_settings(self):
         """应用设备设置（名字和外观）"""
-        # _device_service 由 main_window 注入
-        if not hasattr(self, '_device_service') or self._device_service is None:
+        if not self._device_state or not self._device_state.connected:
             QMessageBox.information(self, "提示", "请先连接设备")
             return
 
@@ -174,14 +174,14 @@ class DevicePage(QWidget):
                         f"建议缩短名字或使用更少的字符。"
                     )
 
-                self._device_service.send_command(DeviceCmd.CHANGE_NAME, name_bytes)
+                self._device_state.service.send_command(DeviceCmd.CHANGE_NAME, name_bytes)
                 self.log(f"设置设备名字: {name_text} ({len(name_bytes)} 字节)", "send")
 
             # 2. 设置设备外观
             appearance_name = self.appearance_combo.currentText()
             appearance_value = BLE_APPEARANCE[appearance_name]
             appearance_bytes = struct.pack("<H", appearance_value)
-            self._device_service.send_command(DeviceCmd.CHANGE_APPEARE, appearance_bytes)
+            self._device_state.service.send_command(DeviceCmd.CHANGE_APPEARE, appearance_bytes)
             self.log(f"设置设备外观: {appearance_name} (0x{appearance_value:04X})", "send")
 
             QMessageBox.information(self, "成功", "设备设置已应用\n重启设备应用新名字\n可能需要重启ble_tcp_driver然后重新连接")

@@ -57,9 +57,10 @@ class ModePage(QWidget):
 
     config_changed = Signal()
 
-    def __init__(self, mode_config: ModeConfig, parent=None):
+    def __init__(self, mode_config: ModeConfig, device_state=None, parent=None):
         super().__init__(parent)
         self._config = mode_config
+        self._device_state = device_state  # 保存 DeviceState 引用
         self._processed_frames = []  # list of ProcessedFrame
         self._upload_worker = None
         self._setup_ui()
@@ -326,12 +327,11 @@ class ModePage(QWidget):
 
     def _apply_keys_to_device(self):
         """UI 按钮触发的按键配置上传"""
-        # _device_service 由 main_window 注入
-        if not hasattr(self, '_device_service') or self._device_service is None:
+        if not self._device_state or not self._device_state.connected:
             QMessageBox.information(self, "提示", "请先连接设备")
             return
         try:
-            self.upload_keys_to_device(self._device_service)
+            self.upload_keys_to_device(self._device_state.service)
             QMessageBox.information(self, "成功", "按键配置已写入设备")
         except Exception as e:
             QMessageBox.warning(self, "写入失败", str(e))
@@ -390,7 +390,7 @@ class ModePage(QWidget):
 
     def _upload_to_device(self):
         """UI 按钮触发的动画上传（查询设备当前状态后上传）"""
-        if not hasattr(self, '_device_service') or self._device_service is None:
+        if not self._device_state or not self._device_state.connected:
             QMessageBox.information(self, "提示", "请先连接设备")
             return
 
@@ -399,7 +399,7 @@ class ModePage(QWidget):
             all_states = []
             max_capacity = 0
             for mode_id in range(3):
-                state = self._device_service.read_pic_state(mode_id)
+                state = self._device_state.service.read_pic_state(mode_id)
                 all_states.append(state)
                 max_capacity = state.get("all_mode_max_pic", MAX_TOTAL_FRAMES)
 
@@ -455,10 +455,10 @@ class ModePage(QWidget):
 
                 # 7. 用户确认，清空被覆盖的模式
                 for mode_id in overlapped_modes:
-                    self._device_service.update_pic(mode_id, 0, 0, fps=10)
+                    self._device_state.service.update_pic(mode_id, 0, 0, fps=10)
 
             # 8. 执行上传
-            self.upload_to_device(self._device_service, start_index)
+            self.upload_to_device(self._device_state.service, start_index)
 
         except Exception as e:
             QMessageBox.warning(self, "上传失败", str(e))

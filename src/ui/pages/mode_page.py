@@ -374,33 +374,117 @@ class ModePage(QWidget):
         if not hasattr(self, '_device_service') or self._device_service is None:
             QMessageBox.information(self, "提示", "请先连接设备")
             return
+
         try:
-            # 查询当前模式的图片状态
-            current_state = self._device_service.read_pic_state(self._config.mode_id)
-            old_count = current_state.get("pic_length", 0)
+            # 1. 查询所有模式的状态
+            all_states = []
+            max_capacity = 0
+            for mode_id in range(3):
+                state = self._device_service.read_pic_state(mode_id)
+                all_states.append(state)
+                max_capacity = state.get("all_mode_max_pic", MAX_TOTAL_FRAMES)
+
+            # 2. 获取当前要上传的模式和帧数
+            current_mode = self._config.mode_id
             new_count = len(self._config.display.frame_paths)
 
-            # 如果新动画比原先多，放到所有模式最后面，避免覆盖
-            if new_count > old_count:
-                # 查询所有模式，找到最后一帧的位置
-                max_end = 0
-                for mode_id in range(3):
-                    state = self._device_service.read_pic_state(mode_id)
-                    mode_end = state.get("start_index", 0) + state.get("pic_length", 0)
-                    max_end = max(max_end, mode_end)
-                start_index = max_end
-                QMessageBox.information(
-                    self, "提示",
-                    f"新动画 ({new_count} 帧) 比原先 ({old_count} 帧) 多，\n"
-                    f"将上传到位置 {start_index} (所有模式之后)"
-                )
-            else:
-                # 复用原位置
-                start_index = current_state.get("start_index", 0)
+            if new_count == 0:
+                QMessageBox.information(self, "提示", "没有可上传的帧")
+                return
 
+            # 3. 构建除当前模式外的占用区域
+            occupied_regions = []  # [(start, end, mode_id), ...]
+            for state in all_states:
+                mode_id = state.get("mode", 0)
+                if mode_id == current_mode:
+                    continue  # 跳过当前模式
+                start = state.get("start_index", 0)
+                length = state.get("pic_length", 0)
+                if length > 0:
+                    occupied_regions.append((start, start + length, mode_id))
+
+            # 按起始位置排序
+            occupied_regions.sort(key=lambda x: x[0])
+
+            # 4. 寻找能容纳 new_count 帧的连续空间
+            start_index = self._find_free_space(occupied_regions, new_count, max_capacity)
+
+            # 5. 检测是否会覆盖其他模式
+            end_index = start_index + new_count
+            overlapped_modes = []
+            for region_start, region_end, mode_id in occupied_regions:
+                # 检查区间是否重叠
+                if not (end_index <= region_start or start_index >= region_end):
+                    overlapped_modes.append(mode_id)
+
+            # 6. 如果有覆盖，弹出确认对话框
+            if overlapped_modes:
+                mode_names = [f"模式 {m}" for m in overlapped_modes]
+                reply = QMessageBox.question(
+                    self, "空间不足",
+                    f"没有足够的连续空间存储 {new_count} 帧动画。\n\n"
+                    f"上传到位置 {start_index} 将会覆盖以下模式：\n"
+                    f"{', '.join(mode_names)}\n\n"
+                    f"这些模式的动画将被清空（长度设为0）。\n\n"
+                    f"是否继续？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+
+                if reply != QMessageBox.Yes:
+                    return
+
+                # 7. 用户确认，清空被覆盖的模式
+                for mode_id in overlapped_modes:
+                    self._device_service.update_pic(mode_id, 0, 0, fps=10)
+
+            # 8. 执行上传
             self.upload_to_device(self._device_service, start_index)
+
         except Exception as e:
             QMessageBox.warning(self, "上传失败", str(e))
+
+    def _find_free_space(self, occupied_regions, needed_count, max_capacity):
+        """寻找能容纳 needed_count 帧的连续空间
+
+        Args:
+            occupied_regions: [(start, end, mode_id), ...] 已占用区域列表（已排序）
+            needed_count: 需要的帧数
+            max_capacity: 设备最大容量
+
+        Returns:
+            int: 起始位置
+        """
+        # 没有任何占用区域，从头开始
+        if not occupied_regions:
+            return 0
+
+        # 检查开头是否有空间
+        first_start = occupied_regions[0][0]
+        if first_start >= needed_count:
+            return 0
+
+        # 检查相邻区域之间的间隙
+        for i in range(len(occupied_regions) - 1):
+            gap_start = occupied_regions[i][1]  # 当前区域结束位置
+            gap_end = occupied_regions[i + 1][0]  # 下一区域开始位置
+            gap_size = gap_end - gap_start
+
+            if gap_size >= needed_count:
+                return gap_start
+
+        # 检查末尾是否有空间
+        last_end = occupied_regions[-1][1]
+        if last_end + needed_count <= max_capacity:
+            return last_end
+
+        # 没有足够的连续空间，选择最优覆盖位置：
+        # 1. 如果从位置0开始能放下，就从0开始（覆盖第一个模式）
+        if needed_count <= max_capacity:
+            return 0
+
+        # 2. 如果连容量都不够，从末尾开始（尽量保留前面的）
+        return max(0, max_capacity - needed_count)
 
     def _on_upload_done(self, success: bool, message: str, progress: QProgressDialog):
         progress.close()

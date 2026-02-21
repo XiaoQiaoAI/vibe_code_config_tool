@@ -3,12 +3,16 @@
 """
 
 from datetime import datetime
+import struct
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QGridLayout, QLabel,
-    QTextEdit, QPushButton, QHBoxLayout,
+    QTextEdit, QPushButton, QHBoxLayout, QLineEdit, QComboBox,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt
+
+from ...comm.protocol import DeviceCmd, BLE_APPEARANCE
 
 
 class DevicePage(QWidget):
@@ -66,6 +70,35 @@ class DevicePage(QWidget):
 
         layout.addWidget(ble_group)
 
+        # ========== 设备设置 ==========
+        settings_group = QGroupBox("设备设置")
+        settings_layout = QGridLayout(settings_group)
+
+        # 设备名字
+        settings_layout.addWidget(QLabel("设备名字:"), 0, 0)
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("最长21字节（UTF-8）")
+        self.name_input.setMaxLength(50)  # UI 限制，实际会在应用时验证字节数
+        settings_layout.addWidget(self.name_input, 0, 1)
+
+        # 设备外观
+        settings_layout.addWidget(QLabel("设备外观:"), 1, 0)
+        self.appearance_combo = QComboBox()
+        for name in BLE_APPEARANCE.keys():
+            self.appearance_combo.addItem(name)
+        settings_layout.addWidget(self.appearance_combo, 1, 1)
+
+        # 应用按钮
+        apply_btn = QPushButton("应用设置")
+        apply_btn.setStyleSheet(
+            "background-color: #2e7d32; color: white; font-weight: bold; "
+            "padding: 6px 16px;"
+        )
+        apply_btn.clicked.connect(self._apply_settings)
+        settings_layout.addWidget(apply_btn, 2, 0, 1, 2)
+
+        layout.addWidget(settings_group)
+
         # ========== 通信日志 ==========
         log_group = QGroupBox("通信日志")
         log_layout = QVBoxLayout(log_group)
@@ -112,3 +145,47 @@ class DevicePage(QWidget):
         colors = {"info": "#aaa", "send": "#4fc3f7", "recv": "#66bb6a", "error": "#f44336"}
         color = colors.get(level, "#aaa")
         self.log_text.append(f'<span style="color:{color}">{ts} &gt; {message}</span>')
+
+    def _apply_settings(self):
+        """应用设备设置（名字和外观）"""
+        # _device_service 由 main_window 注入
+        if not hasattr(self, '_device_service') or self._device_service is None:
+            QMessageBox.information(self, "提示", "请先连接设备")
+            return
+
+        try:
+            # 1. 设置设备名字
+            name_text = self.name_input.text().strip()
+            if name_text:
+                name_bytes = name_text.encode("utf-8")
+                if len(name_bytes) > 21:
+                    QMessageBox.warning(
+                        self, "名字过长",
+                        f"设备名字最长支持21字节（UTF-8编码）\n"
+                        f"当前: {len(name_bytes)} 字节\n\n"
+                        f"请缩短名字或使用更少的字符。"
+                    )
+                    return
+                if len(name_bytes) > 15:
+                    QMessageBox.warning(
+                        self, "名字有点长",
+                        f"设备名字最长支持21字节，但是广播包只能显示前15字节，显示会有乱码\n"
+                        f"当前: {len(name_bytes)} 字节\n\n"
+                        f"建议缩短名字或使用更少的字符。"
+                    )
+
+                self._device_service.send_command(DeviceCmd.CHANGE_NAME, name_bytes)
+                self.log(f"设置设备名字: {name_text} ({len(name_bytes)} 字节)", "send")
+
+            # 2. 设置设备外观
+            appearance_name = self.appearance_combo.currentText()
+            appearance_value = BLE_APPEARANCE[appearance_name]
+            appearance_bytes = struct.pack("<H", appearance_value)
+            self._device_service.send_command(DeviceCmd.CHANGE_APPEARE, appearance_bytes)
+            self.log(f"设置设备外观: {appearance_name} (0x{appearance_value:04X})", "send")
+
+            QMessageBox.information(self, "成功", "设备设置已应用\n重启设备应用新名字\n可能需要重启ble_tcp_driver然后重新连接")
+
+        except Exception as e:
+            self.log(f"设置失败: {e}", "error")
+            QMessageBox.warning(self, "设置失败", str(e))

@@ -413,11 +413,11 @@ def send_new_state(state):
     bridge = TcpClient() 
     bridge.connect("127.0.0.1", 9000)
     device = DeviceService(bridge)
+    cmd_data = struct.pack("<B", state)
+    device.send_command(DeviceCmd.UPDATE_STATE, cmd_data, have_ret=False)
     ret = device.query_devices_state()
     if ret["is_target"]:
         # print("yes")
-        cmd_data = struct.pack("<B", state)
-        device.send_command(DeviceCmd.UPDATE_STATE, cmd_data, have_ret=False)
         return device.query_devices_info()
     else:
          return None

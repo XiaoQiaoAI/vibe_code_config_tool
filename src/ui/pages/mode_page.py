@@ -342,8 +342,24 @@ class ModePage(QWidget):
 
     def upload_to_device(self, service, start_index: int):
         """准备并上传帧数据到设备（由外部调用）"""
+        total_frames = len(self._config.display.frame_paths)
+
+        if total_frames == 0:
+            QMessageBox.information(self, "提示", "没有可上传的帧")
+            return start_index
+
+        # 立即创建并显示进度条
+        progress = QProgressDialog("正在准备图片数据...", "取消", 0, total_frames, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)  # 立即显示，不等待
+        progress.setValue(0)  # 强制立即显示
+
+        # 处理图片数据
         frames_data = []
-        for path in self._config.display.frame_paths:
+        for i, path in enumerate(self._config.display.frame_paths):
+            if progress.wasCanceled():
+                return start_index
+
             if os.path.exists(path):
                 try:
                     img = load_image(path)
@@ -353,15 +369,18 @@ class ModePage(QWidget):
                     continue
 
         if not frames_data:
+            progress.close()
             QMessageBox.information(self, "提示", "没有可上传的帧")
             return start_index
+
+        # 更新进度条文本
+        progress.setLabelText("正在上传到设备...")
+        progress.setMaximum(len(frames_data))
+        progress.setValue(0)
 
         self._upload_worker = UploadWorker(
             service, self._config.mode_id, frames_data, start_index, self._config.display.fps
         )
-
-        progress = QProgressDialog("正在上传...", "取消", 0, len(frames_data), self)
-        progress.setWindowModality(Qt.WindowModal)
 
         self._upload_worker.progress.connect(lambda sent, total: progress.setValue(sent))
         self._upload_worker.finished.connect(lambda ok, msg: self._on_upload_done(ok, msg, progress))

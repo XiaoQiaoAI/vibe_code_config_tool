@@ -14,12 +14,12 @@ class UdpLog:
         self._host = host
         self._port = port
         self._tag = tag
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def _send(self, level, msg):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}][{self._tag}][{level}] {msg}\n"
-        self._sock.sendto(line.encode("utf-8"), (self._host, self._port))
+        # self._sock.sendto(line.encode("utf-8"), (self._host, self._port))
 
     def debug(self, msg):
         self._send(self.LEVEL_DEBUG, msg)

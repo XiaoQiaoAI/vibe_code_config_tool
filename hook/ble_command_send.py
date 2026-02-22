@@ -2,7 +2,9 @@ import struct
 import threading
 from enum import IntEnum
 import socket
-
+import json
+import sys
+import os
 
 # ==============================
 # TCP Packet Type (桥接层)
@@ -409,18 +411,91 @@ class ClaudeState(IntEnum):
     CL_UserPromptSubmit=7
     CL_SessionEnd=8
 
-def send_new_state(state):
-    bridge = TcpClient() 
-    bridge.connect("127.0.0.1", 9000)
-    device = DeviceService(bridge)
-    cmd_data = struct.pack("<B", state)
-    device.send_command(DeviceCmd.UPDATE_STATE, cmd_data, have_ret=False)
-    ret = device.query_devices_state()
-    if ret["is_target"]:
-        # print("yes")
-        return device.query_devices_info()
+
+def is_port_open(host, port, timeout=0.3):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        result = s.connect_ex((host, port))
+        return result == 0
+
+# print(is_port_open("127.0.0.1", 9000))
+
+DEFAULT_CONFIG = {
+    "server_ip": "127.0.0.1",
+    "server_port": 9000
+}
+from UdpLog import UdpLog
+
+def is_frozen():
+    """判断当前是否为 PyInstaller 打包的可执行程序。"""
+    return getattr(sys, 'frozen', False)
+
+
+def get_self_path() -> str:
+    """获取当前程序自身的路径（exe 或 py 脚本）。"""
+    if is_frozen():
+        return sys.executable
     else:
-         return None
+        return os.path.abspath(__file__)
+
+
+def load_config():
+    log = UdpLog(tag="dist")
+    # 获取当前脚本所在目录
+    base_dir = os.path.dirname(get_self_path())
+    config_path = os.path.join(base_dir, "config_client.json")
+    log.info(config_path)
+
+    # 如果文件不存在，创建默认配置
+    if not os.path.exists(config_path):
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
+        # print("未找到 config.json，已创建默认配置")
+        return DEFAULT_CONFIG["server_ip"], DEFAULT_CONFIG["server_port"]
+
+    # 文件存在，尝试读取
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        # 补全缺失字段
+        updated = False
+        for key in DEFAULT_CONFIG:
+            if key not in config:
+                config[key] = DEFAULT_CONFIG[key]
+                updated = True
+
+        # 如果有字段缺失则写回
+        if updated:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+
+        return config["server_ip"], config["server_port"]
+
+    except (json.JSONDecodeError, OSError):
+        # 文件损坏，重建
+        # print("config.json 格式错误，已重建默认配置")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(DEFAULT_CONFIG, f, indent=4)
+
+        return DEFAULT_CONFIG["server_ip"], DEFAULT_CONFIG["server_port"]
+
+
+def send_new_state(state):
+    ip, port = load_config()
+    if is_port_open(ip, port):
+        bridge = TcpClient() 
+        bridge.connect(ip, port)
+        device = DeviceService(bridge)
+        cmd_data = struct.pack("<B", state)
+        device.send_command(DeviceCmd.UPDATE_STATE, cmd_data, have_ret=False)
+        ret = device.query_devices_state()
+        if ret["is_target"]:
+            # print("yes")
+            return device.query_devices_info()
+        else:
+            return None
+    return None
 
     # b = decode_rgb565(img)
     # device.write_large_data(0, data)
